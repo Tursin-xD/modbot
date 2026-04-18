@@ -1,0 +1,20 @@
+# Use Python 3.11 as the base image
+FROM python:3.11-slim-bookworm
+
+# Install FFmpeg and other dependencies for audio
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set the working directory
+WORKDIR /app
+
+# Copy your requirements and install them
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of your bot's code
+COPY . .
+
+# Run the bot
+CMD ["python", "main.py"]
