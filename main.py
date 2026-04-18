@@ -2,76 +2,101 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import yt_dlp
-import asyncio
 import os
-from keep_alive import keep_alive
+import google.generativeai as genai
+from flask import Flask
+from threading import Thread
 
-# --- INITIALIZATION ---
+# --- 1. RENDER WEB SERVER (To stay 24/7) ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "I am alive!"
+
+def run():
+    # Render's default port is 10000
+    app.run(host='0.0.0.0', port=10000)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# --- 2. AI SETUP ---
+genai.configure(api_key="AIzaSyD-q8mzC189sb-2yvIwiSzmB7k0E6WDkmo")
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+# --- 3. BOT CORE ---
 class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.all()
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # This syncs your slash commands with Discord
         await self.tree.sync()
-        print(f"Synced slash commands for {self.user}")
+        
+    async def on_ready(self):
+        print(f"✅ Logged in as {self.user}")
+        print("🌐 Hosting: Render Cloud")
 
 bot = MyBot()
 
-# YouTube/FFmpeg Settings
+# Cloud-optimized FFmpeg settings
 YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': 'True', 'quiet': True}
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
 }
 
-# --- 1. SMART MODERATION (Slash) ---
-@bot.tree.command(name="clear", description="Delete a number of messages")
-@app_commands.checks.has_permissions(manage_messages=True)
-async def clear(interaction: discord.Interaction, amount: int):
-    await interaction.response.defer(ephemeral=True)
-    await interaction.channel.purge(limit=amount)
-    await interaction.followup.send(f"🧹 Deleted {amount} messages.")
-
-# --- 2. MUSIC & PARTY (Slash) ---
-@bot.tree.command(name="play", description="Play music from YouTube in a Voice or Stage channel")
+# --- 4. MUSIC & WATCH TOGETHER ---
+@bot.tree.command(name="play", description="Play music on Render")
 async def play(interaction: discord.Interaction, search: str):
     if not interaction.user.voice:
-        return await interaction.response.send_message("Join a voice channel first!", ephemeral=True)
+        return await interaction.response.send_message("❌ Join a VC first!")
 
-    await interaction.response.defer() # Gives the bot time to process the video
-    
-    # Connection Logic
-    vc = interaction.guild.voice_client
-    if not vc:
-        vc = await interaction.user.voice.channel.connect()
-        # Auto-Speaker for Stage
-        if isinstance(interaction.user.voice.channel, discord.StageChannel):
-            try:
-                await interaction.guild.me.edit(suppress=False)
-            except:
-                pass
+    await interaction.response.defer()
+    vc = interaction.guild.voice_client or await interaction.user.voice.channel.connect()
 
     with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-        info = ydl.extract_info(f"ytsearch:{search}", download=False)['entries'][0]
-        url2 = info['url']
-        source = await discord.FFmpegOpusAudio.from_probe(url2, **FFMPEG_OPTIONS)
-        vc.play(source)
+        try:
+            info = ydl.extract_info(f"ytsearch:{search}", download=False)['entries'][0]
+            # On Render, we don't use 'executable=...'. We just use 'ffmpeg'
+            source = discord.FFmpegOpusAudio(info['url'], **FFMPEG_OPTIONS)
+            
+            if vc.is_playing(): vc.stop()
+            vc.play(source)
+            await interaction.followup.send(f"🎶 Playing: **{info['title']}**")
+        except Exception as e:
+            await interaction.followup.send(f"⚠️ Error: {e}")
 
-    await interaction.followup.send(f"🎶 Now Playing: **{info['title']}**")
+@bot.tree.command(name="show", description="Watch Together Activity")
+async def show(interaction: discord.Interaction):
+    if not interaction.user.voice:
+        return await interaction.response.send_message("❌ Join a VC first!")
+    
+    # YouTube Activity ID
+    try:
+        invite = await interaction.user.voice.channel.create_invite(
+            target_type=discord.InviteTarget.embedded_application,
+            target_application_id=880218394199220334
+        )
+        await interaction.response.send_message(f"🎬 Click to Watch Together: {invite.url}")
+    except:
+        await interaction.response.send_message("❌ Activity failed to start.")
 
-@bot.tree.command(name="leave", description="Stop music and leave the channel")
-async def leave(interaction: discord.Interaction):
-    if interaction.guild.voice_client:
-        await interaction.guild.voice_client.disconnect()
-        await interaction.response.send_message("👋 Left the channel.")
-    else:
-        await interaction.response.send_message("I'm not in a voice channel!", ephemeral=True)
+# --- 5. AI & UTILITY ---
+@bot.tree.command(name="ask", description="Gemini AI")
+async def ask(interaction: discord.Interaction, question: str):
+    await interaction.response.defer()
+    response = model.generate_content(question)
+    await interaction.followup.send(f"🤖 **Gemini:** {response.text[:1900]}")
 
-# --- 3. SKILL BOT (XP System) ---
+@bot.tree.command(name="serverinfo", description="Stats")
+async def serverinfo(interaction: discord.Interaction):
+    await interaction.response.send_message(f"📊 {interaction.guild.name} | {interaction.guild.member_count} members")
+
+# --- 6. XP SYSTEM ---
 xp_data = {}
-
 @bot.event
 async def on_message(message):
     if message.author.bot: return
@@ -79,16 +104,9 @@ async def on_message(message):
     xp_data[uid] = xp_data.get(uid, 0) + 10
     await bot.process_commands(message)
 
-@bot.tree.command(name="rank", description="Check your current XP")
-async def rank(interaction: discord.Interaction):
-    xp = xp_data.get(str(interaction.user.id), 0)
-    await interaction.response.send_message(f"🏆 {interaction.user.mention}, you have **{xp} XP**!")
-
-# --- 4. UTILITY (Slash) ---
-@bot.tree.command(name="ping", description="Check bot latency")
-async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message(f"📡 Latency: {round(bot.latency * 1000)}ms")
-
-# --- LAUNCH ---
-keep_alive()
-bot.run(os.getenv('TOKEN'))
+# --- RUN ---
+if __name__ == "__main__":
+    keep_alive() 
+    # Important: Set 'DISCORD_TOKEN' in Render Environment Variables
+    token = os.getenv("DISCORD_TOKEN") 
+    bot.run(token)
