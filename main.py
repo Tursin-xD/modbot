@@ -120,10 +120,18 @@ async def ping(interaction: discord.Interaction):
     await interaction.response.send_message(f"📡 {round(bot.latency * 1000)}ms")
 
 # --- 7. RUN ---
+# Replace your final 'run' block with this:
 if __name__ == "__main__":
     keep_alive()
     token = os.getenv("DISCORD_TOKEN")
-    if token:
-        bot.run(token)
+    
+    if not token:
+        print("🚨 ERROR: DISCORD_TOKEN is missing!")
     else:
-        print("🚨 CRITICAL: DISCORD_TOKEN is missing in Render Environment Variables!")
+        try:
+            bot.run(token)
+        except discord.errors.HTTPException as e:
+            if e.status == 429:
+                print("🛑 DISCORD RATE LIMIT: Render's IP is blocked. Try restarting the service.")
+            else:
+                print(f"❌ Connection Error: {e}")
