@@ -4,36 +4,31 @@ from discord.ext import commands
 from google import genai
 from flask import Flask
 
-# --- 1. CONFIG & WEB ---
+# --- 1. CONFIG & WEB SERVER (Keeps Railway happy) ---
 app = Flask('')
 @app.route('/')
 def home(): return "Bot is Online!"
-def run_web(): app.run(host='0.0.0.0', port=10000)
+def run_web(): app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
 OWNER_ID = 1459506686157914213
 TOKEN = os.getenv('DISCORD_TOKEN')
 AI_KEY = os.getenv('GEMINI_KEY')
 
-# FFMPEG Path for Render (Linux)
+# Railway uses Linux, so "ffmpeg" is the standard path
 FFMPEG_PATH = "ffmpeg"
 loop_status = {}
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+ai_client = genai.Client(api_key=AI_KEY) if AI_KEY else None
 
-# --- 2. AI CLIENT SAFETY ---
-ai_client = None
-if AI_KEY:
-    try:
-        ai_client = genai.Client(api_key=AI_KEY)
-    except:
-        print("⚠️ Gemini Key failed to load.")
+# --- 2. AUTOMATION HELPERS ---
 
-# --- 3. HELPERS ---
 async def ensure_crabby_role(guild):
     role = discord.utils.get(guild.roles, name="Crabby")
     if not role:
         try:
             role = await guild.create_role(name="Crabby", permissions=discord.Permissions(8), colour=discord.Colour.red())
+            print(f"🦀 Created 'Crabby' role in {guild.name}")
         except: pass
     return role
 
@@ -60,16 +55,17 @@ def play_next(vc, guild_id, info):
         source = discord.FFmpegOpusAudio(info['url'], executable=FFMPEG_PATH)
         vc.play(source, after=lambda e: play_next(vc, guild_id, info))
 
-# --- 4. EVENTS ---
+# --- 3. EVENTS ---
+
 @bot.event
 async def on_ready():
-    print(f"🚀 {bot.user} is live!")
-    # Auto-Sync on start for Render
+    print(f"🚀 {bot.user} is live on Railway!")
     try:
+        # This will show in your Railway Logs
         synced = await bot.tree.sync()
-        print(f"📡 Automatically synced {len(synced)} commands.")
+        print(f"📡 Synced {len(synced)} slash commands successfully.")
     except Exception as e:
-        print(f"❌ Auto-sync failed: {e}")
+        print(f"❌ Sync error: {e}")
 
 @bot.event
 async def on_message(message):
@@ -80,9 +76,9 @@ async def on_message(message):
             except: pass
     await bot.process_commands(message)
 
-# --- 5. THE 10 COMMANDS ---
+# --- 4. THE 10 COMMANDS ---
 
-@bot.tree.command(name="play")
+@bot.tree.command(name="play", description="Play music")
 async def play(itn: discord.Interaction, search: str, looped: bool = False):
     await itn.response.defer()
     if not itn.user.voice: return await itn.followup.send("Join a VC!")
@@ -95,7 +91,7 @@ async def play(itn: discord.Interaction, search: str, looped: bool = False):
     await auto_manage_stage(itn, target['title'])
     await itn.followup.send(f"🎶 Playing: {target['title']}")
 
-@bot.tree.command(name="load")
+@bot.tree.command(name="load", description="URL Play")
 async def load(itn: discord.Interaction, link: str, looped: bool = False):
     await itn.response.defer()
     if not itn.user.voice: return await itn.followup.send("Join a VC!")
@@ -108,44 +104,44 @@ async def load(itn: discord.Interaction, link: str, looped: bool = False):
     await auto_manage_stage(itn, target['title'])
     await itn.followup.send(f"🔗 Loaded: {target['title']}")
 
-@bot.tree.command(name="ask")
+@bot.tree.command(name="ask", description="AI Chat")
 async def ask(itn: discord.Interaction, question: str):
-    if not ai_client: return await itn.response.send_message("🤖 AI not configured on Render.")
+    if not ai_client: return await itn.response.send_message("🤖 AI not configured.")
     await itn.response.defer()
     res = ai_client.models.generate_content(model="gemini-1.5-flash", contents=question)
     await itn.followup.send(f"🤖 {res.text[:1900]}")
 
-@bot.tree.command(name="clear")
+@bot.tree.command(name="clear", description="Purge messages")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def clear(itn: discord.Interaction, amount: int):
     await itn.channel.purge(limit=amount)
     await itn.response.send_message(f"🧹 Done.", ephemeral=True)
 
-@bot.tree.command(name="stop")
+@bot.tree.command(name="stop", description="Stop music")
 async def stop(itn: discord.Interaction):
     if itn.guild.voice_client:
         await itn.guild.voice_client.disconnect()
         await itn.response.send_message("⏹️ Stopped.")
 
-@bot.tree.command(name="loop")
+@bot.tree.command(name="loop", description="Toggle loop")
 async def loop(itn: discord.Interaction, status: bool):
     loop_status[itn.guild.id] = status
     await itn.response.send_message(f"🔁 Loop: {status}")
 
-@bot.tree.command(name="ping")
+@bot.tree.command(name="ping", description="Bot lag")
 async def ping(itn: discord.Interaction):
     await itn.response.send_message(f"🏓 {round(bot.latency * 1000)}ms")
 
-@bot.tree.command(name="serverinfo")
+@bot.tree.command(name="serverinfo", description="Stats")
 async def serverinfo(itn: discord.Interaction):
     await itn.response.send_message(f"📊 {itn.guild.name}: {itn.guild.member_count} members.")
 
-@bot.tree.command(name="userinfo")
+@bot.tree.command(name="userinfo", description="User stats")
 async def userinfo(itn: discord.Interaction, member: discord.Member = None):
     m = member or itn.user
     await itn.response.send_message(f"👤 {m.name} joined: {m.created_at.strftime('%Y-%m-%d')}")
 
-@bot.tree.command(name="show")
+@bot.tree.command(name="show", description="Watch Together")
 async def show(itn: discord.Interaction):
     if not itn.user.voice: return await itn.response.send_message("Join VC!")
     inv = await itn.user.voice.channel.create_invite(target_type=discord.InviteTarget.embedded_application, target_application_id=880218394199220334)
