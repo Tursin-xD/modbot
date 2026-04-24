@@ -4,8 +4,9 @@ from discord.ext import commands
 from google import genai
 from flask import Flask
 
-# --- 1. RAILWAY FIXES ---
-os.environ["PATH"] += os.pathsep + "/usr/bin" + os.pathsep + "/usr/local/bin"
+# --- 1. THE RAILWAY "BUG" FIX ---
+# This manually tells Python to look in every possible Linux folder for FFmpeg
+os.environ["PATH"] += os.pathsep + "/usr/bin" + os.pathsep + "/usr/local/bin" + os.pathsep + "/bin"
 
 app = Flask('')
 @app.route('/')
@@ -19,8 +20,8 @@ OWNER_ID = 1459506686157914213
 TOKEN = os.getenv('DISCORD_TOKEN')
 AI_KEY = os.getenv('GEMINI_KEY')
 
-# This is the encoded string you sent in the JSON file
-COOKIE_STRING = "76Hn7ETcaPWaQl75bIeEesaVvG2Rlfbibo2VMYt3YhEXbRam1UoHzU050zSC0F/Yju8CcQTjvs6W42uYnUZOzTy+n6EPh3GvCbpub2zWsuVPoaLambYFQ3yFZ4alyGysdn7PqM8dE3U3ubJVBAPrCi+EvoV1dqlpxZoNDS3opjXKuCqstWhp6sxNrmxwrjjz3CyZtR4HRrFqcLXAd47lkb3c34vaQPVM80NQa1PIyi/cEgBNQySAA/gKRVYyjLH96LUg7REt5rNs52txi8Tb7Mg+66T4YZ0Qly4JVKmMql/91J6p7gqLZDXpGm2uEppBabfa+nIE0m/L91mZuhrKSW+4yf6JEU+tZlQogkHWD+DZr1ic1idUHic4Aq0MGezhfIob1QgT1zPB38p6SFiKsoO4ncqXDCN6/1Fslei+lTsAZ01XTfopDbEyXzx0f3H933NbFC9zrCJH0TuW6sV96auUBo/J+e5rFwj6OA/615..."
+# Using the exact data from your original JSON file
+COOKIE_DATA = "76Hn7ETcaPWaQl75bIeEesaVvG2Rlfbibo2VMYt3YhEXbRam1UoHzU050zSC0F/Yju8CcQTjvs6W42uYnUZOzTy+n6EPh3GvCbpub2zWsuVPoaLambYFQ3yFZ4alyGysdn7PqM8dE3U3ubJVBAPrCi+EvoV1dqlpxZoNDS3opjXKuCqstWhp6sxNrmxwrjjz3CyZtR4HRrFqcLXAd47lkb3c34vaQPVM80NQa1PIyi/cEgBNQySAA/gKRVYyjLH96LUg7REt5rNs52txi8Tb7Mg+66T4YZ0Qly4JVKmMql/91J6p7gqLZDXpGm2uEppBabfa+nIE0m/L91mZuhrKSW+4yf6JEU+tZlQogkHWD+DZr1ic1idUHic4Aq0MGezhfIob1QgT1zPB38p6SFiKsoO4ncqXDCN6/1Fslei+lTsAZ01XTfopDbEyXzx0f3H933NbFC9zrCJH0TuW6sV96auUBo/J+e5rFwj6OA/615..."
 
 FFMPEG_PATH = "ffmpeg"
 loop_status = {}
@@ -37,14 +38,9 @@ async def get_info(query, is_url=False):
             'quiet': True,
             'noplaylist': True,
             'source_address': '0.0.0.0',
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                    'po_token': 'web+mn'
-                }
-            },
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
             'http_headers': {
-                'Cookie': COOKIE_STRING,
+                'Cookie': COOKIE_DATA,
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
             }
         }
@@ -59,7 +55,7 @@ def play_next(vc, guild_id, info):
 
 # --- 4. THE 10 COMMANDS ---
 
-@bot.tree.command(name="play", description="Play music from YT")
+@bot.tree.command(name="play", description="Play music")
 async def play(itn: discord.Interaction, search: str, looped: bool = False):
     await itn.response.defer()
     if not itn.user.voice: return await itn.followup.send("Join a VC!")
@@ -68,12 +64,12 @@ async def play(itn: discord.Interaction, search: str, looped: bool = False):
     try:
         data = await get_info(search)
         target = data['entries'][0]
-        # Railway-specific FFmpeg options for stability
+        # RECONNECT OPTIONS: Fixes audio cutting out on Railway
         options = "-vn -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
         source = discord.FFmpegOpusAudio(target['url'], executable=FFMPEG_PATH, options=options)
         loop_status[itn.guild.id] = looped
         vc.play(source, after=lambda e: play_next(vc, itn.guild.id, target))
-        await itn.followup.send(f"🎶 Now Playing: **{target['title']}**")
+        await itn.followup.send(f"🎶 Playing: **{target['title']}**")
     except Exception as e:
         await itn.followup.send(f"❌ Error: {str(e)[:500]}")
 
