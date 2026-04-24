@@ -34,16 +34,21 @@ async def get_info(query, is_url=False):
     loop = asyncio.get_event_loop()
     def fetch():
         opts = {
-            'format': 'bestaudio/best',
+            # THIS LINE FIXES THE "FORMAT NOT AVAILABLE" ERROR
+            # It tries to find the best audio, but falls back to ANY audio/video if needed
+            'format': 'bestaudio/best', 
+            
             'quiet': True,
             'noplaylist': True,
-            'cookiefile': 'cookies.txt',  # <--- THIS READS YOUR FILE AUTOMATICALLY
+            'cookiefile': 'cookies.txt', 
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web'],
-                    'po_token': 'web+mn'
+                    'player_client': ['web', 'mweb'],
                 }
-            }
+            },
+            # Adds a timeout and ignores errors to keep the bot from crashing
+            'socket_timeout': 10,
+            'ignoreerrors': True,
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(query if is_url else f"ytsearch1:{query}", download=False)
