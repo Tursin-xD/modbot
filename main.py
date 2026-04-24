@@ -37,17 +37,17 @@ async def get_info(query, is_url=False):
             'format': 'bestaudio/best',
             'quiet': True,
             'noplaylist': True,
-            'source_address': '0.0.0.0',
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-            'http_headers': {
-                'Cookie': COOKIE_DATA,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+            'cookiefile': 'cookies.txt',  # <--- THIS READS YOUR FILE AUTOMATICALLY
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'po_token': 'web+mn'
+                }
             }
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(query if is_url else f"ytsearch1:{query}", download=False)
     return await loop.run_in_executor(None, fetch)
-
 def play_next(vc, guild_id, info):
     if loop_status.get(guild_id, False) and vc.is_connected():
         source = discord.FFmpegOpusAudio(info['url'], executable=FFMPEG_PATH)
