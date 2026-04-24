@@ -45,11 +45,22 @@ async def auto_manage_stage(itn, title):
 async def get_info(query, is_url=False):
     loop = asyncio.get_event_loop()
     def fetch():
-        opts = {'format': 'bestaudio/best', 'quiet': True, 'noplaylist': True}
+        opts = {
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'noplaylist': True,
+            # This forces yt-dlp to use the Android client signatures
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android'],
+                    'po_token': 'web+mn' # A small trick to bypass some bot detection
+                }
+            },
+            'source_address': '0.0.0.0' 
+        }
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(query if is_url else f"ytsearch1:{query}", download=False)
     return await loop.run_in_executor(None, fetch)
-
 def play_next(vc, guild_id, info):
     if loop_status.get(guild_id, False) and vc.is_connected():
         source = discord.FFmpegOpusAudio(info['url'], executable=FFMPEG_PATH)
