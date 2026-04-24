@@ -63,21 +63,37 @@ def play_next(vc, guild_id, info):
 @bot.tree.command(name="play", description="Play music")
 async def play(itn: discord.Interaction, search: str, looped: bool = False):
     await itn.response.defer()
-    if not itn.user.voice: return await itn.followup.send("Join a VC!")
+    
+    if not itn.user.voice: 
+        return await itn.followup.send("Join a VC first!")
+    
     vc = itn.guild.voice_client or await itn.user.voice.channel.connect()
-    if vc.is_playing(): vc.stop(); await asyncio.sleep(1)
+    
     try:
         data = await get_info(search)
+        
+        # --- THE SAFETY CHECK ---
+        if data is None or 'entries' not in data or not data['entries']:
+            return await itn.followup.send("❌ Could not find that song. YouTube might be blocking the request.")
+        
         target = data['entries'][0]
-        # RECONNECT OPTIONS: Fixes audio cutting out on Railway
+        # ------------------------
+
+        if vc.is_playing(): 
+            vc.stop()
+            await asyncio.sleep(1)
+
         options = "-vn -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
         source = discord.FFmpegOpusAudio(target['url'], executable=FFMPEG_PATH, options=options)
+        
         loop_status[itn.guild.id] = looped
         vc.play(source, after=lambda e: play_next(vc, itn.guild.id, target))
+        
         await itn.followup.send(f"🎶 Playing: **{target['title']}**")
+        
     except Exception as e:
+        print(f"Play Error: {e}")
         await itn.followup.send(f"❌ Error: {str(e)[:500]}")
-
 @bot.tree.command(name="ask", description="AI Chat")
 async def ask(itn: discord.Interaction, question: str):
     if not ai_client: return await itn.response.send_message("AI Key missing.")
