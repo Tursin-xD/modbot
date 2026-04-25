@@ -37,35 +37,27 @@ async def get_info(query, is_url=False):
             'format': 'bestaudio/best',
             'quiet': True,
             'noplaylist': True,
-            'cookiefile': 'cookies.txt',
+            # We keep the cookiefile line, but the TV client might not even need it
+            'cookiefile': 'cookies.txt', 
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['web', 'mweb'],
+                    # 'tv' is the secret weapon here; it's less likely to block servers
+                    'player_client': ['tv'],
                 }
             },
-            # Add a real User-Agent so YouTube doesn't think you're a bot script
-            #restart here
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            # This tells yt-dlp to keep going even if one format fails
             'ignoreerrors': True,
+            'no_warnings': True,
         }
-        
         with yt_dlp.YoutubeDL(opts) as ydl:
-            # We add a small retry logic for the search
-            try:
-                search_query = query if is_url else f"ytsearch1:{query}"
-                print(f"DEBUG: Searching for {search_query}") # Check your Railway logs for this!
-                
-                info = ydl.extract_info(search_query, download=False)
-                
-                if info and 'entries' in info and len(info['entries']) > 0:
-                    return info['entries'][0]
-                return info 
-            except Exception as e:
-                print(f"DEBUG SEARCH ERROR: {e}")
-                return None
-                
+            search_query = query if is_url else f"ytsearch1:{query}"
+            info = ydl.extract_info(search_query, download=False)
+            
+            if info and 'entries' in info and len(info['entries']) > 0:
+                return info['entries'][0]
+            return info
+            
     return await loop.run_in_executor(None, fetch)
-
 @bot.tree.command(name="play", description="Play music")
 async def play(itn: discord.Interaction, search: str):
     await itn.response.defer()
