@@ -33,30 +33,36 @@ ai_client = genai.Client(api_key=AI_KEY) if AI_KEY else None
 async def get_info(query, is_url=False):
     loop = asyncio.get_event_loop()
     def fetch():
-  opts = {
-    'format': 'bestaudio/best',
-    'quiet': True,
-    'noplaylist': True,
-    'cookiefile': 'cookies.txt',
-    'extractor_args': {
-        'youtube': {
-            # Try using the iOS or TV client instead of 'web'
-            'player_client': ['ios', 'mweb'],
-            'po_token': 'web+mn' 
+        opts = {
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'noplaylist': True,
+            'cookiefile': 'cookies.txt',
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web', 'mweb'],
+                }
+            },
+            # Add a real User-Agent so YouTube doesn't think you're a bot script
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'ignoreerrors': True,
         }
-    },
-    'ignoreerrors': True,
-}
+        
         with yt_dlp.YoutubeDL(opts) as ydl:
-            # If it's not a URL, we use ytsearch to find it
-            search_query = query if is_url else f"ytsearch1:{query}"
-            info = ydl.extract_info(search_query, download=False)
-            
-            # If search used, grab the first entry from the list
-            if info and 'entries' in info and len(info['entries']) > 0:
-                return info['entries'][0]
-            return info # Return direct info if it's a link
-            
+            # We add a small retry logic for the search
+            try:
+                search_query = query if is_url else f"ytsearch1:{query}"
+                print(f"DEBUG: Searching for {search_query}") # Check your Railway logs for this!
+                
+                info = ydl.extract_info(search_query, download=False)
+                
+                if info and 'entries' in info and len(info['entries']) > 0:
+                    return info['entries'][0]
+                return info 
+            except Exception as e:
+                print(f"DEBUG SEARCH ERROR: {e}")
+                return None
+                
     return await loop.run_in_executor(None, fetch)
 
 @bot.tree.command(name="play", description="Play music")
