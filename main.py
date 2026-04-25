@@ -33,18 +33,20 @@ ai_client = genai.Client(api_key=AI_KEY) if AI_KEY else None
 async def get_info(query, is_url=False):
     loop = asyncio.get_event_loop()
     def fetch():
-        opts = {
-            'format': 'bestaudio/best',
-            'quiet': True,
-            'noplaylist': True,
-            'cookiefile': 'cookies.txt', # Using your new file
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['web', 'mweb'],
-                }
-            },
-            'ignoreerrors': True,
+  opts = {
+    'format': 'bestaudio/best',
+    'quiet': True,
+    'noplaylist': True,
+    'cookiefile': 'cookies.txt',
+    'extractor_args': {
+        'youtube': {
+            # Try using the iOS or TV client instead of 'web'
+            'player_client': ['ios', 'mweb'],
+            'po_token': 'web+mn' 
         }
+    },
+    'ignoreerrors': True,
+}
         with yt_dlp.YoutubeDL(opts) as ydl:
             # If it's not a URL, we use ytsearch to find it
             search_query = query if is_url else f"ytsearch1:{query}"
