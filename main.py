@@ -34,66 +34,57 @@ async def get_info(query, is_url=False):
     loop = asyncio.get_event_loop()
     def fetch():
         opts = {
-            # THIS LINE FIXES THE "FORMAT NOT AVAILABLE" ERROR
-            # It tries to find the best audio, but falls back to ANY audio/video if needed
-            'format': 'bestaudio/best', 
-            
+            'format': 'bestaudio/best',
             'quiet': True,
             'noplaylist': True,
-            'cookiefile': 'cookies.txt', 
+            'cookiefile': 'cookies.txt', # Using your new file
             'extractor_args': {
                 'youtube': {
                     'player_client': ['web', 'mweb'],
                 }
             },
-            # Adds a timeout and ignores errors to keep the bot from crashing
-            'socket_timeout': 10,
             'ignoreerrors': True,
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
-            return ydl.extract_info(query if is_url else f"ytsearch1:{query}", download=False)
+            # If it's not a URL, we use ytsearch to find it
+            search_query = query if is_url else f"ytsearch1:{query}"
+            info = ydl.extract_info(search_query, download=False)
+            
+            # If search used, grab the first entry from the list
+            if info and 'entries' in info and len(info['entries']) > 0:
+                return info['entries'][0]
+            return info # Return direct info if it's a link
+            
     return await loop.run_in_executor(None, fetch)
-def play_next(vc, guild_id, info):
-    if loop_status.get(guild_id, False) and vc.is_connected():
-        source = discord.FFmpegOpusAudio(info['url'], executable=FFMPEG_PATH)
-        vc.play(source, after=lambda e: play_next(vc, guild_id, info))
-
-# --- 4. THE 10 COMMANDS ---
 
 @bot.tree.command(name="play", description="Play music")
-async def play(itn: discord.Interaction, search: str, looped: bool = False):
+async def play(itn: discord.Interaction, search: str):
     await itn.response.defer()
     
-    if not itn.user.voice: 
-        return await itn.followup.send("Join a VC first!")
+    # 1. Get song data
+    song_data = await get_info(search, is_url=search.startswith("http"))
     
+    # 2. Check if search actually worked
+    if not song_data:
+        return await itn.followup.send("❌ Error: Could not find song or YouTube is blocking the request.")
+
+    # 3. Connect to voice
+    if not itn.user.voice:
+        return await itn.followup.send("Join a voice channel first!")
+        
     vc = itn.guild.voice_client or await itn.user.voice.channel.connect()
     
+    if vc.is_playing():
+        vc.stop()
+
+    # 4. Play the music
     try:
-        data = await get_info(search)
-        
-        # --- THE SAFETY CHECK ---
-        if data is None or 'entries' not in data or not data['entries']:
-            return await itn.followup.send("❌ Could not find that song. YouTube might be blocking the request.")
-        
-        target = data['entries'][0]
-        # ------------------------
-
-        if vc.is_playing(): 
-            vc.stop()
-            await asyncio.sleep(1)
-
-        options = "-vn -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
-        source = discord.FFmpegOpusAudio(target['url'], executable=FFMPEG_PATH, options=options)
-        
-        loop_status[itn.guild.id] = looped
-        vc.play(source, after=lambda e: play_next(vc, itn.guild.id, target))
-        
-        await itn.followup.send(f"🎶 Playing: **{target['title']}**")
-        
+        # 'ffmpeg' works if NIXPACKS_PKGS is set to include ffmpeg
+        source = await discord.FFmpegOpusAudio.from_probe(song_data['url'], method='fallback')
+        vc.play(source)
+        await itn.followup.send(f"🎶 Now playing: **{song_data.get('title', 'Unknown Title')}**")
     except Exception as e:
-        print(f"Play Error: {e}")
-        await itn.followup.send(f"❌ Error: {str(e)[:500]}")
+        await itn.followup.send(f"❌ FFmpeg Error: {e}")
 @bot.tree.command(name="ask", description="AI Chat")
 async def ask(itn: discord.Interaction, question: str):
     if not ai_client: return await itn.response.send_message("AI Key missing.")
