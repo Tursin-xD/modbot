@@ -6,7 +6,7 @@ from flask import Flask
 from threading import Thread
 
 # --- 1. CONFIGURATION ---
-TOKEN = "MTQ5NDk4NDM1NTE5MjUwODYxNw.GAfud3.V9vZgn48_DOsc81uioUSUB7tMnO8-xM-RzcR0I"
+TOKEN = os.environ.get("DISCORD_TOKEN")
 OWNER_ID = 1459506686157914213
 BASE_DIR = "files2"
 PORT = int(os.environ.get("PORT", 8080))
